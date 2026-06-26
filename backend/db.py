@@ -125,6 +125,7 @@ salary_records = Table("salary_records", metadata,
 engine = sqlalchemy.create_engine(SYNC_DATABASE_URL)
 
 async def create_tables():
+    pass
     metadata.create_all(engine)
 
 async def connect_db():
@@ -132,3 +133,4 @@ async def connect_db():
 
 async def disconnect_db():
     await database.disconnect()
+
