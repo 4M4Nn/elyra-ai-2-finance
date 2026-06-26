@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: elyra-ai-2-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        value: postgresql://neondb_owner:npg_XmP4i2VRbSWH@ep-floral-cloud-aoqw1itf-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+      - key: GROQ_API_KEY
+        value: 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
+      - key: SECRET_KEY
+        value: 14277ac633394d83f3162ab6c12e8c01c67f2adb4cc5ae041424790478fa857f
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
