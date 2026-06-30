@@ -129,24 +129,26 @@ async def export_expenses(current_user=Depends(get_current_user)):
 
 @router.post("/expenses/import/excel")
 async def import_expenses(file: UploadFile = File(...), current_user=Depends(get_current_user)):
-    if not file.filename.endswith((".xlsx", ".xls")):
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Only .xlsx or .xls files are supported")
 
     contents = await file.read()
-    wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+    except Exception:
+        raise HTTPException(400, "Could not read file — make sure it is a valid Excel file")
     ws = wb.active
 
-    # Read headers from first row (case-insensitive)
-    headers = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[1]]
+    headers = [str(cell.value).strip().lower() if cell.value is not None else "" for cell in ws[1]]
 
     FIELD_MAP = {
-        "category": ["category"],
-        "description": ["description", "desc", "details", "particulars"],
-        "amount": ["amount", "amount (₹)", "amount (rs)", "amount(₹)", "cost", "price"],
-        "expense_date": ["date", "expense_date", "expense date"],
-        "payment_mode": ["payment mode", "payment_mode", "mode", "payment method"],
-        "vendor": ["vendor", "vendor name", "supplier"],
-        "reference": ["reference", "ref", "ref no", "bill no", "receipt no"],
+        "category":     ["category", "type", "expense type"],
+        "description":  ["description", "desc", "details", "particulars", "narration", "remarks"],
+        "amount":       ["amount", "amount (₹)", "amount (rs)", "amount(₹)", "cost", "price", "value", "total"],
+        "expense_date": ["date", "expense_date", "expense date", "txn date", "transaction date"],
+        "payment_mode": ["payment mode", "payment_mode", "mode", "payment method", "pay mode"],
+        "vendor":       ["vendor", "vendor name", "supplier", "party", "paid to"],
+        "reference":    ["reference", "ref", "ref no", "bill no", "receipt no", "voucher no"],
     }
 
     col_idx = {}
@@ -157,54 +159,68 @@ async def import_expenses(file: UploadFile = File(...), current_user=Depends(get
                 break
 
     if "amount" not in col_idx or "expense_date" not in col_idx:
-        raise HTTPException(400, "Excel must have at least 'Amount' and 'Date' columns")
+        found = list(col_idx.keys())
+        raise HTTPException(
+            400,
+            f"Excel must have 'Amount' and 'Date' columns. Detected columns: {headers}. Matched: {found}"
+        )
+
+    def cell_val(row, field):
+        i = col_idx.get(field)
+        if i is None or i >= len(row):
+            return None
+        v = row[i]
+        return None if v is None else v
+
+    def cell_str(row, field, default=""):
+        v = cell_val(row, field)
+        s = str(v).strip() if v is not None else ""
+        return s if s.lower() != "none" else default
+
+    DATE_FMTS = ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d"]
 
     VALID_CATEGORIES = {"salary","rent","utilities","marketing","infrastructure","stationery","maintenance","travel","miscellaneous"}
-    VALID_MODES = {"cash","upi","bank_transfer","cheque"}
+    VALID_MODES      = {"cash","upi","bank_transfer","cheque"}
 
-    inserted = 0
-    skipped = 0
+    inserted = skipped = 0
     for row in ws.iter_rows(min_row=2, values_only=True):
-        if not any(row):
+        if not any(v for v in row if v is not None):
             continue
 
-        def get(field):
-            i = col_idx.get(field)
-            return row[i] if i is not None and i < len(row) else None
-
-        raw_amount = get("amount")
-        raw_date = get("expense_date")
+        raw_amount = cell_val(row, "amount")
+        raw_date   = cell_val(row, "expense_date")
 
         try:
             amount = float(str(raw_amount).replace(",", "").replace("₹", "").strip())
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, AttributeError):
             skipped += 1
             continue
 
         if isinstance(raw_date, (date, datetime)):
             exp_date = raw_date.date() if isinstance(raw_date, datetime) else raw_date
         else:
-            try:
-                exp_date = datetime.strptime(str(raw_date).strip(), "%Y-%m-%d").date()
-            except ValueError:
+            raw_date_str = str(raw_date).strip()
+            parsed = None
+            for fmt in DATE_FMTS:
                 try:
-                    exp_date = datetime.strptime(str(raw_date).strip(), "%d-%m-%Y").date()
+                    parsed = datetime.strptime(raw_date_str, fmt).date()
+                    break
                 except ValueError:
-                    try:
-                        exp_date = datetime.strptime(str(raw_date).strip(), "%d/%m/%Y").date()
-                    except ValueError:
-                        skipped += 1
-                        continue
+                    continue
+            if parsed is None:
+                skipped += 1
+                continue
+            exp_date = parsed
 
-        raw_cat = str(get("category") or "miscellaneous").strip().lower()
+        raw_cat = cell_str(row, "category", "miscellaneous").lower()
         category = raw_cat if raw_cat in VALID_CATEGORIES else "miscellaneous"
 
-        raw_mode = str(get("payment_mode") or "cash").strip().lower().replace(" ", "_")
+        raw_mode = cell_str(row, "payment_mode", "cash").lower().replace(" ", "_")
         payment_mode = raw_mode if raw_mode in VALID_MODES else "cash"
 
-        description = str(get("description") or "Imported expense").strip()
-        vendor = str(get("vendor") or "").strip() or None
-        reference = str(get("reference") or "").strip() or None
+        description = cell_str(row, "description", "Imported expense") or "Imported expense"
+        vendor      = cell_str(row, "vendor") or None
+        reference   = cell_str(row, "reference") or None
 
         await database.execute(expenses.insert().values(
             category=category,
@@ -218,7 +234,7 @@ async def import_expenses(file: UploadFile = File(...), current_user=Depends(get
         ))
         inserted += 1
 
-    return {"message": f"Import complete", "inserted": inserted, "skipped": skipped}
+    return {"message": "Import complete", "inserted": inserted, "skipped": skipped}
 
 
 # ── SALARY ─────────────────────────────────────────────────────────────────────

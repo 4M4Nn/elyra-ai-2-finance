@@ -11,6 +11,7 @@ export default function Expenses() {
   const [summary, setSummary] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [form, setForm] = useState({
@@ -69,15 +70,16 @@ export default function Expenses() {
     if (!file) return
     const formData = new FormData()
     formData.append('file', file)
+    setImporting(true)
     try {
-      const res = await api.post('/expenses/import/excel', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
+      // Do NOT set Content-Type manually — axios must auto-set it with the multipart boundary
+      const res = await api.post('/expenses/import/excel', formData)
       toast.success(`Imported ${res.data.inserted} expenses${res.data.skipped ? ` (${res.data.skipped} skipped)` : ''}`)
       fetch()
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Import failed')
+      toast.error(err.response?.data?.detail || 'Import failed — check your Excel columns')
     } finally {
+      setImporting(false)
       e.target.value = ''
     }
   }
@@ -93,7 +95,9 @@ export default function Expenses() {
         </div>
         <div className="flex gap-3">
           <button onClick={exportExcel} className="btn-secondary"><Download size={15} /> Export</button>
-          <button onClick={() => fileInputRef.current?.click()} className="btn-secondary"><Upload size={15} /> Import Excel</button>
+          <button onClick={() => fileInputRef.current?.click()} disabled={importing} className="btn-secondary">
+            <Upload size={15} /> {importing ? 'Importing…' : 'Import Excel'}
+          </button>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={importExcel} />
           <button onClick={() => setShowModal(true)} className="btn-primary"><Plus size={16} /> Add Expense</button>
         </div>
