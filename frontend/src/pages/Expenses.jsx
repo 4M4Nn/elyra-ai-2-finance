@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import api from '../utils/api'
 import toast from 'react-hot-toast'
-import { Plus, Download, X, Trash2 } from 'lucide-react'
+import { Plus, Download, Upload, X, Trash2 } from 'lucide-react'
 
 const fmt = n => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
 const CATEGORIES = ['salary','rent','utilities','marketing','infrastructure','stationery','maintenance','travel','miscellaneous']
@@ -19,6 +19,7 @@ export default function Expenses() {
     payment_mode: 'upi', vendor: '', reference: ''
   })
 
+  const fileInputRef = useRef(null)
   const today = new Date()
   const fetch = async () => {
     setLoading(true)
@@ -63,6 +64,24 @@ export default function Expenses() {
     a.href = url; a.download = 'expenses_export.xlsx'; a.click()
   }
 
+  const importExcel = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const res = await api.post('/expenses/import/excel', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      toast.success(`Imported ${res.data.inserted} expenses${res.data.skipped ? ` (${res.data.skipped} skipped)` : ''}`)
+      fetch()
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Import failed')
+    } finally {
+      e.target.value = ''
+    }
+  }
+
   const totalMonth = summary.reduce((s, r) => s + r.total, 0)
 
   return (
@@ -74,6 +93,8 @@ export default function Expenses() {
         </div>
         <div className="flex gap-3">
           <button onClick={exportExcel} className="btn-secondary"><Download size={15} /> Export</button>
+          <button onClick={() => fileInputRef.current?.click()} className="btn-secondary"><Upload size={15} /> Import Excel</button>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={importExcel} />
           <button onClick={() => setShowModal(true)} className="btn-primary"><Plus size={16} /> Add Expense</button>
         </div>
       </div>
